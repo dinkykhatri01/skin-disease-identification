@@ -7,6 +7,9 @@ import pickle
 from tensorflow.keras.models import load_model
 import os
 import speech_recognition as sr
+from googletrans import Translator, LANGUAGES
+import cv2
+from streamlit_webrtc import VideoTransformerBase, webrtc_streamer
 
 # --------------------- Load Models and Data ---------------------
 # Load CNN model for image-based disease classification
@@ -22,6 +25,9 @@ with open('text_symptom_model.pkl', 'rb') as file:
 # Load TF-IDF Vectorizer for text input
 with open('tfidf_vectorizer.pkl', 'rb') as file:
     tfidf_vectorizer = pickle.load(file)
+
+# Initialize translator
+translator = Translator()
 
 # --------------------- Streamlit Page Config ---------------------
 st.set_page_config(
@@ -64,7 +70,13 @@ st.write("Upload an image for skin disease prediction or enter your symptoms for
 
 # --------------------- Image-Based Disease Prediction ---------------------
 st.markdown('<p class="subtitle">Image-Based Prediction</p>', unsafe_allow_html=True)
+
+# Option to upload image
 uploaded_image = st.file_uploader("Upload an image of the affected skin (JPG, JPEG, PNG)", type=["jpg", "jpeg", "png"])
+
+# Option to capture live image using camera
+st.write("OR")
+live_camera = st.camera_input("Capture image using your camera")
 
 def preprocess_image(image):
     img = image.resize((128, 128))  # Resize image to model input
@@ -72,10 +84,30 @@ def preprocess_image(image):
     img = np.expand_dims(img, axis=0)
     return img
 
+# Check if user uploaded an image or captured a live photo
 if uploaded_image is not None:
     # Display uploaded image
     image = Image.open(uploaded_image)
-    st.image(image, caption="Uploaded Image", use_column_width=True, output_format="auto")
+    st.image(image, caption="Uploaded Image", use_container_width=True, output_format="auto")
+    st.markdown('<hr>', unsafe_allow_html=True)
+    
+    # Predict using CNN model
+    st.write("Predicting disease...")
+    processed_img = preprocess_image(image)
+    predictions = cnn_model.predict(processed_img)
+
+    # Display result
+    class_names = ["Melanoma", "Psoriasis", "Eczema", "Healthy"]
+    predicted_class = class_names[np.argmax(predictions)]
+    infection_percentage = f"{np.max(predictions) * 100:.2f}%"
+
+    st.success(f"Prediction: {predicted_class}")
+    st.info(f"Infection Percentage: {infection_percentage}")
+
+elif live_camera:
+    # Display captured live image
+    image = Image.open(live_camera)
+    st.image(image, caption="Captured Image", use_container_width=True, output_format="auto")
     st.markdown('<hr>', unsafe_allow_html=True)
     
     # Predict using CNN model
@@ -106,15 +138,21 @@ st.session_state["symptoms"] = st.text_area(
 
 # Voice input button
 st.write("OR")
-if st.button("Speak Symptoms"):
+if st.button("Speak Symptoms (Hindi/English)"):
     r = sr.Recognizer()
     with sr.Microphone() as source:
         st.info("Listening... Please speak your symptoms.")
         try:
             audio = r.listen(source, timeout=5)
-            spoken_text = r.recognize_google(audio)
-            st.success(f"Recognized Symptoms: {spoken_text}")
-            st.session_state["symptoms"] = spoken_text  # Update session state with spoken symptoms
+            spoken_text = r.recognize_google(audio)  # Recognize in default language
+            
+            # Check if the text is in Hindi or English
+            detected_lang = translator.detect(spoken_text).lang
+            if detected_lang == "hi":  # If detected as Hindi, translate to English
+                st.session_state["symptoms"] = translator.translate(spoken_text, src="hi", dest="en").text
+            else:  # If already English, use directly
+                st.session_state["symptoms"] = spoken_text
+                
         except sr.UnknownValueError:
             st.error("Sorry, I could not understand your speech. Please try again.")
         except sr.RequestError as e:
